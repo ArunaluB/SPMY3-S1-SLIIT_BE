@@ -5,6 +5,9 @@ const ImageKit = require('imagekit');
 const mongoose = require('mongoose');
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
+const Chat = require("./models/chat.js");
+const UserChats = require("./models/userChats.js");
+const { ClerkExpressRequireAuth } = require("@clerk/clerk-sdk-node");
 
 const cors = require('cors');
 app.use(cors({
@@ -24,7 +27,7 @@ app.get("/api/upload", (req, res) => {
 });
 
 
-app.post("/api/chats", async (req, res) => {
+app.post("/api/chats", ClerkExpressRequireAuth(), async (req, res) => {
     const userId = req.auth.userId;
     const { text } = req.body;
 
@@ -75,6 +78,19 @@ app.post("/api/chats", async (req, res) => {
     }
 });
 
+app.get("/api/userchats", ClerkExpressRequireAuth(), async (req, res) => {
+    const userId = req.auth.userId;
+
+    try {
+        const userChats = await UserChats.find({ userId });
+
+        res.status(200).send(userChats[0].chats);
+    } catch (err) {
+        console.log(err);
+        res.status(500).send("Error fetching userchats!");
+    }
+});
+
 
 
 const connect = async () => {
@@ -85,6 +101,11 @@ const connect = async () => {
         console.log(err);
     }
 };
+
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(401).send("Unauthenticated!");
+});
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
