@@ -1,11 +1,9 @@
 async function generatePDFReport(chatDetailsArray, analysisText, barChartImage, pieChartImage) {
-    const PDFDocument = require('pdfkit');
-
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument();
         const pdfBuffer = [];
 
-        doc.on('data', pdfBuffer.push.bind(pdfBuffer));
+        doc.on('data', chunk => pdfBuffer.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(pdfBuffer)));
         doc.on('error', reject);
 

@@ -10,7 +10,7 @@ const Chat = require("./models/chat.js");
 const UserChats = require("./models/userChats.js");
 const { ClerkExpressRequireAuth } = require("@clerk/clerk-sdk-node");
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const generatePDFReport = require("./models/generatePDFReport.js");
+// const generatePDFReport = require("./models/generatePDFReport.js");
 const { generateBarChartImage, generatePieChartImage } = require("./models/util.js");
 // Initialize Google Generative AI
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
@@ -224,6 +224,57 @@ const retryRequest = async (callback, retries = 5, delayMs = 3000) => {
         }
     }
 };
+const PDFDocument = require('pdfkit');
+
+async function generatePDFReport(chatDetailsArray, analysisText, barChartImage, pieChartImage) {
+    return new Promise((resolve, reject) => {
+        const doc = new PDFDocument();
+        const pdfBuffer = [];
+
+        doc.on('data', chunk => pdfBuffer.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(pdfBuffer)));
+        doc.on('error', reject);
+
+        // Title
+        doc.fontSize(20).text('Chat Analysis Report', { align: 'center' });
+        doc.moveDown();
+
+        // Chat Summary
+        doc.fontSize(12).text('Total chats analyzed: ' + chatDetailsArray.length);
+        doc.moveDown();
+
+        // Add the analysis insights
+        doc.text('Analysis Insights:', { underline: true });
+        doc.moveDown();
+        doc.text(analysisText, { align: 'left' });
+        doc.moveDown(2);
+
+        // Insert Bar Chart
+        if (barChartImage) {
+            doc.addPage();
+            doc.text('Bar Chart Representation', { align: 'center' });
+            doc.image(barChartImage, {
+                fit: [500, 300],
+                align: 'center',
+                valign: 'center',
+            });
+        }
+
+        // Insert Pie Chart
+        if (pieChartImage) {
+            doc.addPage();
+            doc.text('Pie Chart Representation', { align: 'center' });
+            doc.image(pieChartImage, {
+                fit: [500, 300],
+                align: 'center',
+                valign: 'center',
+            });
+        }
+
+        // Finalize the PDF
+        doc.end();
+    });
+}
 
 // Generate a report and perform analysis
 app.get("/api/generate-report",ClerkExpressRequireAuth(), async (req, res) => {
@@ -284,23 +335,23 @@ app.get("/api/generate-report",ClerkExpressRequireAuth(), async (req, res) => {
         const result = await model.generateContent(analysisPrompt);
         const analysisText = result.response.text();
         console.log(analysisText);
-        const barChartImage = await generateBarChartImage(chatDetailsArray);
-        const pieChartImage = await generatePieChartImage(chatDetailsArray);
-
+        console.log("Generating PDF...");
+         // Generate charts (if needed, ensure `generateBarChartImage` and `generatePieChartImage` return valid buffers)
+         const barChartImage = await generateBarChartImage(chatDetailsArray);
+         const pieChartImage = await generatePieChartImage(chatDetailsArray);
         const pdfBuffer = await generatePDFReport(chatDetailsArray, analysisText, barChartImage, pieChartImage);
 
-        // res.setHeader('Content-Type', 'application/pdf');
-        // res.setHeader('Content-Disposition', 'attachment; filename="report.pdf"');
-        // res.send(pdfBuffer);
-        // Check if the PDF generation was successful
-        if (!pdfBuffer) {
-            return res.status(500).send("Error generating the PDF.");
+        console.log("PDF generated. Buffer size:", pdfBuffer.length);
+
+        if (!pdfBuffer || pdfBuffer.length === 0) {
+            throw new Error("PDF generation resulted in an empty buffer");
         }
 
-        // Send the PDF file as a download
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', 'attachment; filename="report.pdf"');
+        res.setHeader('Content-Disposition', 'attachment; filename="chat_analysis_report.pdf"');
+        res.setHeader('Content-Length', pdfBuffer.length);
         res.send(pdfBuffer);
+        console.log("PDF sent to client successfully");
     } catch (err) {
         console.error("Error generating report:", err);
         res.status(500).send("Error generating report.");
