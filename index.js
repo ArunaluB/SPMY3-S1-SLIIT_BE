@@ -1,3 +1,4 @@
+
 const express = require('express');
 const app = express();
 require("dotenv").config();
@@ -8,6 +9,13 @@ app.use(express.json());
 const Chat = require("./models/chat.js");
 const UserChats = require("./models/userChats.js");
 const { ClerkExpressRequireAuth } = require("@clerk/clerk-sdk-node");
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const generatePDFReport = require("./models/generatePDFReport.js");
+const { generateBarChartImage, generatePieChartImage } = require("./models/util.js");
+// Initialize Google Generative AI
+const genAI = new GoogleGenerativeAI(process.env.API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
 
 
 const cors = require('cors');
@@ -26,7 +34,6 @@ app.get("/api/upload", (req, res) => {
     const result = imagekit.getAuthenticationParameters();
     res.send(result);
 });
-
 
 app.post("/api/chats", ClerkExpressRequireAuth(), async (req, res) => {
     const userId = req.auth.userId;
@@ -169,14 +176,121 @@ app.delete("/api/chats/:id", ClerkExpressRequireAuth(), async (req, res) => {
     }
 });
 
+// Endpoint to handle the AI request
+app.post('/api/check-code', async (req, res) => {
+    const prompt = `Check this and give some comments: ${req.body.code}`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        res.json({ response: result.response.text() });
+    } catch (error) {
+        console.error('Error generating AI content:', error);
+        res.status(500).json({ error: 'An error occurred while generating content.' });
+    }
+});
 
 app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(401).send("Unauthenticated!");
 });
 
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+const retryRequest = async (callback, retries = 5, delayMs = 3000) => {
+    try {
+        return await callback();
+    } catch (error) {
+        if (retries > 0 && error.status === 429) {
+            console.warn(`Rate limit hit. Retrying after ${delayMs / 1000} seconds...`);
+            await delay(delayMs);
+            return retryRequest(callback, retries - 1, delayMs);
+        } else {
+            throw error;
+        }
+    }
+};
+
+// Generate a report and perform analysis
+app.get("/api/generate-report",ClerkExpressRequireAuth(), async (req, res) => {
+    const userId = req.auth.userId;
+    console.warn("Generating report for user:", userId);
+
+    try {
+        const now = new Date();
+        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+        const userChats = await UserChats.findOne({ userId });
+
+        if (!userChats || !userChats.chats.length) {
+            return res.status(404).send("No chats found for the user.");
+        }
+
+        const chatDetailsArray = [];
+
+        for (let chat of userChats.chats) {
+            const chatDetails = await Chat.findOne({
+                _id: chat._id,
+                userId,
+                createdAt: {
+                    $gte: firstDayOfMonth,
+                    $lte: lastDayOfMonth,
+                },
+            });
+
+            if (chatDetails) {
+                const textData = chatDetails.history.map((entry) => {
+                    return entry.parts.map((part) => part.text);
+                });
+                chatDetailsArray.push({
+                    chatId: chat._id,
+                    text: textData.flat(),
+                });
+            }
+        }
 
 
+        if (chatDetailsArray.length === 0) {
+            return res.status(404).send("No chats found for the current month.");
+        }
+
+        const analysisPrompt = `
+       Please analyze the following chat history. Provide the following insights:
+       1. Common themes in the conversations.
+       2. Weaknesses or areas where the user could improve.
+       3. Positive aspects or strengths of the user in the chats.
+       4. Suggestions for improvement based on the content of the chats.
+       5. Issue measurement shown.
+       6. Suggestions for practice coding.
+       Chat History: ${JSON.stringify(chatDetailsArray)}
+       `;
+
+        // Step 2: Generate the analysis using Google Generative AI (or another language model)
+        const result = await model.generateContent(analysisPrompt);
+        const analysisText = result.response.text();
+        console.log(analysisText);
+        const barChartImage = await generateBarChartImage(chatDetailsArray);
+        const pieChartImage = await generatePieChartImage(chatDetailsArray);
+
+        const pdfBuffer = await generatePDFReport(chatDetailsArray, analysisText, barChartImage, pieChartImage);
+
+        // res.setHeader('Content-Type', 'application/pdf');
+        // res.setHeader('Content-Disposition', 'attachment; filename="report.pdf"');
+        // res.send(pdfBuffer);
+        // Check if the PDF generation was successful
+        if (!pdfBuffer) {
+            return res.status(500).send("Error generating the PDF.");
+        }
+
+        // Send the PDF file as a download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename="report.pdf"');
+        res.send(pdfBuffer);
+    } catch (err) {
+        console.error("Error generating report:", err);
+        res.status(500).send("Error generating report.");
+    }
+});
 
 const connect = async () => {
     try {
