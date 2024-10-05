@@ -98,7 +98,22 @@ app.post("/api/chats", ClerkExpressRequireAuth(), async (req, res) => {
 //         res.status(500).send("Error fetching userchats!");
 //     }
 // });
-
+const questionSchema = new mongoose.Schema({
+    question: String,
+    options: [String],
+    correctAnswer: String,
+  });
+  
+  const Question = mongoose.model('Question', questionSchema);
+  
+  app.get('/questions', async (req, res) => {
+    try {
+      const questions = await Question.find();
+      res.json(questions);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch questions' });
+    }
+  });
 app.get("/api/userchats", ClerkExpressRequireAuth(), async (req, res) => {
     const userId = req.auth.userId;
 
